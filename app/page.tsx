@@ -71,8 +71,7 @@ const test_jobs: Job[] = names.map((name, id) => {
 export default function JobSchedulerPage() {
   // System configuration
   const [numCPUs, setNumCPUs] = useState<number>(2);
-  const [timeQuantum, setTimeQuantum] = useState<number>(1);
-  const [examples, setExamples] = useState<Job[][]>();
+  const [timeQuantum, setTimeQuantum] = useState<number>(0);
 
   // Jobs management
   const [jobs, setJobs] = useState<Job[]>([
@@ -928,7 +927,7 @@ export default function JobSchedulerPage() {
                   <Input
                     id="time-quantum"
                     type="number"
-                    min="0.1"
+                    min="0"
                     step="0.1"
                     value={timeQuantum}
                     onChange={(e) =>
