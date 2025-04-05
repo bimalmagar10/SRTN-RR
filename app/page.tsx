@@ -22,9 +22,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-
+import { exampleJobs, jobColors } from "@/lib/utils";
 // Define job type
-interface Job {
+export interface Job {
   id: string;
   name: string;
   arrival: number;
@@ -72,9 +72,15 @@ export default function JobSchedulerPage() {
   // System configuration
   const [numCPUs, setNumCPUs] = useState<number>(2);
   const [timeQuantum, setTimeQuantum] = useState<number>(1);
+  const [examples, setExamples] = useState<Job[][]>();
 
   // Jobs management
-  const [jobs, setJobs] = useState<Job[]>([...test_jobs]);
+  const [jobs, setJobs] = useState<Job[]>([
+    ...exampleJobs.default.map((job) => ({
+      ...job,
+      color: jobColors[Number.parseInt(job.id) % jobColors.length],
+    })),
+  ]);
   const [newJobName, setNewJobName] = useState<string>("");
   const [newJobArrival, setNewJobArrival] = useState<number>(0);
   const [newJobBurst, setNewJobBurst] = useState<number>(1);
@@ -90,27 +96,9 @@ export default function JobSchedulerPage() {
   const [schedulingAlgorithm, setSchedulingAlgorithm] = useState<
     "srtn" | "round-robin"
   >("srtn");
+  const [selectedExample, setSelectedExample] = useState<string>("default");
 
   // Job colors for Gantt chart
-  const jobColors = [
-    "bg-teal-400",
-    "bg-orange-400",
-    "bg-red-400",
-    "bg-blue-400",
-    "bg-purple-400",
-    "bg-green-400",
-    "bg-yellow-400",
-    "bg-pink-400",
-    "bg-indigo-400",
-    "bg-cyan-400",
-    "bg-lime-400",
-    "bg-amber-400",
-    "bg-emerald-400",
-    "bg-fuchsia-400",
-    "bg-rose-400",
-    "bg-sky-400",
-    "bg-violet-400",
-  ];
 
   // Get next available color
   const getNextColor = () => {
@@ -161,6 +149,42 @@ export default function JobSchedulerPage() {
     }
     setJobs(jobs.filter((job) => job.id !== id));
   };
+  const loadJobExample = (exampleKey: string) => {
+    // Reset used color indices
+    setUsedColorIndices([]);
+
+    // Get the selected example jobs
+    const examples = [...exampleJobs[exampleKey as keyof typeof exampleJobs]];
+
+    // Assign colors to jobs
+    const coloredJobs = examples.map((job) => ({
+      ...job,
+      color: getNextColor(),
+    }));
+
+    // Set the jobs
+    setJobs(coloredJobs);
+
+    // Update the selected example
+    setSelectedExample(exampleKey);
+
+    // Reset calculation state
+    setCalculated(false);
+  };
+
+  const resetJobs = () => {
+    // Reset used color indices
+    setUsedColorIndices([]);
+
+    // Clear all jobs
+    setJobs([]);
+
+    // Reset the selected example
+    setSelectedExample("none");
+
+    // Reset calculation state
+    setCalculated(false);
+  };
 
   // Calculate the schedule using Shortest Remaining Time Next
   const calculateSchedule = () => {
@@ -186,7 +210,6 @@ export default function JobSchedulerPage() {
           start: -1,
         }))
         .sort((a, b) => a.arrival - b.arrival);
-      console.log("Readyqueue", readyQueue);
       // Track active CPUs and their assigned jobs
       const activeCPUs: {
         cpuId: string;
@@ -200,7 +223,6 @@ export default function JobSchedulerPage() {
       for (let i = 0; i < numCPUs; i++) {
         cpuAssignments[`CPU${i + 1}`] = null;
       }
-      console.log(cpuAssignments);
 
       // Record initial state
       timeline.push({
@@ -217,26 +239,26 @@ export default function JobSchedulerPage() {
       ].sort((a, b) => a - b);
 
       //Pre-create events for all job arrivals
-      // for (const arrivalTime of arrivalTimes) {
-      //   if (arrivalTime > 0) {
-      //     // Skip time 0 as we already recorded it
-      //     const jobsAtThisTime = readyQueue.filter(
-      //       (job) => job.arrival === arrivalTime
-      //     );
+      for (const arrivalTime of arrivalTimes) {
+        if (arrivalTime > 0) {
+          // Skip time 0 as we already recorded it
+          const jobsAtThisTime = readyQueue.filter(
+            (job) => job.arrival === arrivalTime
+          );
 
-      //     if (jobsAtThisTime.length > 0) {
-      //       // Create a special event for this arrival time
-      //       timeline.push({
-      //         time: arrivalTime,
-      //         cpuAssignments: { ...cpuAssignments }, // Current CPU assignments
-      //         queue: jobsAtThisTime.map((job) => ({
-      //           name: job.name,
-      //           remaining: job.remaining!,
-      //         })),
-      //       });
-      //     }
-      //   }
-      // }
+          if (jobsAtThisTime.length > 0) {
+            // Create a special event for this arrival time
+            timeline.push({
+              time: arrivalTime,
+              cpuAssignments: { ...cpuAssignments }, // Current CPU assignments
+              queue: jobsAtThisTime.map((job) => ({
+                name: job.name,
+                remaining: job.remaining!,
+              })),
+            });
+          }
+        }
+      }
 
       // Main scheduling loop - continue until all jobs are completed
       while (readyQueue.length > 0 || activeCPUs.length > 0) {
@@ -955,6 +977,31 @@ export default function JobSchedulerPage() {
               <CardTitle>Add Jobs</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="job-examples">Job Examples</Label>
+                <div className="flex gap-2">
+                  <select
+                    id="job-examples"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={selectedExample}
+                    onChange={(e) => loadJobExample(e.target.value)}
+                  >
+                    <option value="none" disabled={selectedExample !== "none"}>
+                      Select an example
+                    </option>
+                    <option value="default">Default Example</option>
+                    <option value="example1">Example 1 (6 Jobs)</option>
+                    <option value="example2">Example 2 (7 Jobs)</option>
+                  </select>
+                  <Button
+                    variant="outline"
+                    onClick={resetJobs}
+                    className="whitespace-nowrap"
+                  >
+                    Reset Jobs
+                  </Button>
+                </div>
+              </div>
               <div className="grid grid-cols-4 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="job-name">Job Name</Label>
