@@ -55,9 +55,9 @@ interface ExecutionSegment {
   color: string;
 }
 
-const names: string[] = ["J1", "J2", "J3", "J4"];
-const arrival = [0, 0.5, 1, 1];
-const burst = [4, 2, 6, 1.5];
+const names: string[] = ["J1", "J2", "J3", "J4", "J5", "J6"];
+const arrival = [0, 0, 0, 5, 15, 25];
+const burst = [40, 50, 60, 30, 20, 10];
 const test_jobs: Job[] = names.map((name, id) => {
   return {
     id: id.toString(),
@@ -71,7 +71,7 @@ const test_jobs: Job[] = names.map((name, id) => {
 export default function JobSchedulerPage() {
   // System configuration
   const [numCPUs, setNumCPUs] = useState<number>(2);
-  const [timeQuantum, setTimeQuantum] = useState<number>(1);
+  const [timeQuantum, setTimeQuantum] = useState<number>(10);
 
   // Jobs management
   const [jobs, setJobs] = useState<Job[]>([...test_jobs]);
@@ -186,7 +186,7 @@ export default function JobSchedulerPage() {
           start: -1,
         }))
         .sort((a, b) => a.arrival - b.arrival);
-      console.log("Readyqueue", readyQueue);
+
       // Track active CPUs and their assigned jobs
       const activeCPUs: {
         cpuId: string;
@@ -200,7 +200,6 @@ export default function JobSchedulerPage() {
       for (let i = 0; i < numCPUs; i++) {
         cpuAssignments[`CPU${i + 1}`] = null;
       }
-      console.log(cpuAssignments);
 
       // Record initial state
       timeline.push({
@@ -215,28 +214,27 @@ export default function JobSchedulerPage() {
       const arrivalTimes = [
         ...new Set(readyQueue.map((job) => job.arrival)),
       ].sort((a, b) => a - b);
+      // Pre-create events for all job arrivals
+      for (const arrivalTime of arrivalTimes) {
+        if (arrivalTime > 0) {
+          // Skip time 0 as we already recorded it
+          const jobsAtThisTime = readyQueue.filter(
+            (job) => job.arrival === arrivalTime
+          );
 
-      //Pre-create events for all job arrivals
-      // for (const arrivalTime of arrivalTimes) {
-      //   if (arrivalTime > 0) {
-      //     // Skip time 0 as we already recorded it
-      //     const jobsAtThisTime = readyQueue.filter(
-      //       (job) => job.arrival === arrivalTime
-      //     );
-
-      //     if (jobsAtThisTime.length > 0) {
-      //       // Create a special event for this arrival time
-      //       timeline.push({
-      //         time: arrivalTime,
-      //         cpuAssignments: { ...cpuAssignments }, // Current CPU assignments
-      //         queue: jobsAtThisTime.map((job) => ({
-      //           name: job.name,
-      //           remaining: job.remaining!,
-      //         })),
-      //       });
-      //     }
-      //   }
-      // }
+          if (jobsAtThisTime.length > 0) {
+            // Create a special event for this arrival time
+            timeline.push({
+              time: arrivalTime,
+              cpuAssignments: { ...cpuAssignments }, // Current CPU assignments
+              queue: jobsAtThisTime.map((job) => ({
+                name: job.name,
+                remaining: job.remaining!,
+              })),
+            });
+          }
+        }
+      }
 
       // Main scheduling loop - continue until all jobs are completed
       while (readyQueue.length > 0 || activeCPUs.length > 0) {
@@ -312,7 +310,6 @@ export default function JobSchedulerPage() {
           readyQueue.length > 0
             ? readyQueue[0].arrival
             : Number.POSITIVE_INFINITY;
-
         const minQuantum = Math.min(
           ...activeCPUs.map((cpu) =>
             Math.min(cpu.quantumLeft, cpu.job.remaining!)
@@ -323,34 +320,33 @@ export default function JobSchedulerPage() {
 
         // Check if there's a job arrival before the next calculated time step
         const nextTime = time + timeStep;
-
         const arrivalsBeforeNextTime = arrivalTimes.filter(
           (t) => t > time && t < nextTime
         );
 
-        // // If there are arrivals before the next time step, process them one by one
-        // if (arrivalsBeforeNextTime.length > 0) {
-        //   // Process the first arrival
-        //   time = arrivalsBeforeNextTime[0];
-        //   const time_point_idx = timeline.findIndex(
-        //     (item) => item.time === time
-        //   );
-        //   const new_timeevent = {
-        //     time: time,
-        //     cpuAssignments: { ...cpuAssignments },
-        //     queue: readyQueue
-        //       .filter((job) => job.arrival <= time)
-        //       .map((job) => ({ name: job.name, remaining: job.remaining! })),
-        //   };
+        // If there are arrivals before the next time step, process them one by one
+        if (arrivalsBeforeNextTime.length > 0) {
+          // Process the first arrival
+          time = arrivalsBeforeNextTime[0];
+          const time_point_idx = timeline.findIndex(
+            (item) => item.time === time
+          );
+          const new_timeevent = {
+            time: time,
+            cpuAssignments: { ...cpuAssignments },
+            queue: readyQueue
+              .filter((job) => job.arrival <= time)
+              .map((job) => ({ name: job.name, remaining: job.remaining! })),
+          };
 
-        //   // Record the arrival event
-        //   if (time_point_idx !== -1) {
-        //     timeline[time_point_idx] = new_timeevent;
-        //   } else {
-        //     timeline.push(new_timeevent);
-        //   }
-        //   continue; // Restart the loop to process this arrival
-        // }
+          // Record the arrival event
+          if (time_point_idx !== -1) {
+            timeline[time_point_idx] = new_timeevent;
+          } else {
+            timeline.push(new_timeevent);
+          }
+          continue; // Restart the loop to process this arrival
+        }
 
         // Advance time
         const oldTime = time;
@@ -616,29 +612,29 @@ export default function JobSchedulerPage() {
           (t) => t > time && t < nextTime
         );
 
-        // // If there are arrivals before the next time step, process them one by one
-        // if (arrivalsBeforeNextTime.length > 0) {
-        //   // Process the first arrival
-        //   time = arrivalsBeforeNextTime[0];
-        //   const time_point_idx = timeline.findIndex(
-        //     (item) => item.time === time
-        //   );
-        //   const new_timeevent = {
-        //     time: time,
-        //     cpuAssignments: { ...cpuAssignments },
-        //     queue: readyQueue
-        //       .filter((job) => job.arrival <= time)
-        //       .map((job) => ({ name: job.name, remaining: job.remaining! })),
-        //   };
+        // If there are arrivals before the next time step, process them one by one
+        if (arrivalsBeforeNextTime.length > 0) {
+          // Process the first arrival
+          time = arrivalsBeforeNextTime[0];
+          const time_point_idx = timeline.findIndex(
+            (item) => item.time === time
+          );
+          const new_timeevent = {
+            time: time,
+            cpuAssignments: { ...cpuAssignments },
+            queue: readyQueue
+              .filter((job) => job.arrival <= time)
+              .map((job) => ({ name: job.name, remaining: job.remaining! })),
+          };
 
-        //   // Record the arrival event
-        //   if (time_point_idx !== -1) {
-        //     timeline[time_point_idx] = new_timeevent;
-        //   } else {
-        //     timeline.push(new_timeevent);
-        //   }
-        //   continue; // Restart the loop to process this arrival
-        // }
+          // Record the arrival event
+          if (time_point_idx !== -1) {
+            timeline[time_point_idx] = new_timeevent;
+          } else {
+            timeline.push(new_timeevent);
+          }
+          continue; // Restart the loop to process this arrival
+        }
 
         // Advance time
         const oldTime = time;
