@@ -22,9 +22,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { exampleJobs, jobColors } from "@/lib/utils";
 
 // Define job type
-interface Job {
+export interface Job {
   id: string;
   name: string;
   arrival: number;
@@ -74,7 +75,12 @@ export default function JobSchedulerPage() {
   const [timeQuantum, setTimeQuantum] = useState<number>(1);
 
   // Jobs management
-  const [jobs, setJobs] = useState<Job[]>([...test_jobs]);
+  const [jobs, setJobs] = useState<Job[]>([
+    ...exampleJobs.default.map((job) => ({
+      ...job,
+      color: jobColors[Number.parseInt(job.id) % jobColors.length],
+    })),
+  ]);
   const [newJobName, setNewJobName] = useState<string>("");
   const [newJobArrival, setNewJobArrival] = useState<number>(0);
   const [newJobBurst, setNewJobBurst] = useState<number>(1);
@@ -87,27 +93,49 @@ export default function JobSchedulerPage() {
   >([]);
   const [calculated, setCalculated] = useState<boolean>(false);
   const [usedColorIndices, setUsedColorIndices] = useState<number[]>([]);
+  const [schedulingAlgorithm, setSchedulingAlgorithm] = useState<
+    "srtn" | "round-robin"
+  >("srtn");
 
-  // Job colors for Gantt chart
-  const jobColors = [
-    "bg-teal-400",
-    "bg-orange-400",
-    "bg-red-400",
-    "bg-blue-400",
-    "bg-purple-400",
-    "bg-green-400",
-    "bg-yellow-400",
-    "bg-pink-400",
-    "bg-indigo-400",
-    "bg-cyan-400",
-    "bg-lime-400",
-    "bg-amber-400",
-    "bg-emerald-400",
-    "bg-fuchsia-400",
-    "bg-rose-400",
-    "bg-sky-400",
-    "bg-violet-400",
-  ];
+  const [selectedExample, setSelectedExample] = useState<string>("default");
+  const loadJobExample = (exampleKey: string) => {
+    // Reset used color indices
+    setUsedColorIndices([]);
+
+    // Get the selected example jobs
+    const example_jbs = [
+      ...exampleJobs[exampleKey as keyof typeof exampleJobs],
+    ];
+
+    // Assign colors to jobs
+    const coloredJobs = example_jbs.map((job) => ({
+      ...job,
+      color: getNextColor(),
+    }));
+
+    // Set the jobs
+    setJobs(coloredJobs);
+
+    // Update the selected example
+    setSelectedExample(exampleKey);
+
+    // Reset calculation state
+    setCalculated(false);
+  };
+
+  const resetJobs = () => {
+    // Reset used color indices
+    setUsedColorIndices([]);
+
+    // Clear all jobs
+    setJobs([]);
+
+    // Reset the selected example
+    setSelectedExample("none");
+
+    // Reset calculation state
+    setCalculated(false);
+  };
 
   // Get next available color
   const getNextColor = () => {
@@ -449,6 +477,341 @@ export default function JobSchedulerPage() {
 
       return { completed, timeline, segments };
     };
+    const roundRobinScheduler = (
+      jobs: Job[],
+      numCPUs: number,
+      timeQuantum: number
+    ) => {
+      // Initialize variables
+      let time = 0.0;
+      const completed: Job[] = [];
+      const timeline: TimelineEvent[] = [];
+      const segments: ExecutionSegment[] = [];
+
+      // Create a copy of jobs with remaining time set to burst time
+      let readyQueue = [...jobs]
+        .map((job) => ({
+          ...job,
+          remaining: job.burst,
+          start: -1,
+        }))
+        .sort((a, b) => a.arrival - b.arrival);
+
+      // Track active CPUs and their assigned jobs
+      const activeCPUs: {
+        cpuId: string;
+        job: Job;
+        quantumLeft: number;
+        segmentStart: number;
+      }[] = [];
+
+      // Initialize CPU assignments
+      const cpuAssignments: { [key: string]: string | null } = {};
+      for (let i = 0; i < numCPUs; i++) {
+        cpuAssignments[`CPU${i + 1}`] = null;
+      }
+
+      // Record initial state
+      timeline.push({
+        time: time,
+        cpuAssignments: { ...cpuAssignments },
+        queue: readyQueue
+          .filter((job) => job.arrival <= time)
+          .map((job) => ({ name: job.name, remaining: job.remaining! })),
+      });
+
+      // Get all unique arrival times to ensure we record events at these times
+      const arrivalTimes = [
+        ...new Set(readyQueue.map((job) => job.arrival)),
+      ].sort((a, b) => a - b);
+
+      // Pre-create events for all job arrivals
+      for (const arrivalTime of arrivalTimes) {
+        if (arrivalTime > 0) {
+          // Skip time 0 as we already recorded it
+          const jobsAtThisTime = readyQueue.filter(
+            (job) => job.arrival === arrivalTime
+          );
+
+          if (jobsAtThisTime.length > 0) {
+            // Create a special event for this arrival time
+            timeline.push({
+              time: arrivalTime,
+              cpuAssignments: { ...cpuAssignments }, // Current CPU assignments
+              queue: jobsAtThisTime.map((job) => ({
+                name: job.name,
+                remaining: job.remaining!,
+              })),
+              isArrival: true,
+            });
+          }
+        }
+      }
+
+      // Main scheduling loop - continue until all jobs are completed
+      while (readyQueue.length > 0 || activeCPUs.length > 0) {
+        // Find jobs that have arrived by the current time
+        let available = readyQueue.filter(
+          (job) => job.arrival <= time + 0.0001
+        );
+
+        // Assign jobs to available CPUs (in FIFO order)
+        let assignmentsMade = false;
+        while (activeCPUs.length < numCPUs && available.length > 0) {
+          assignmentsMade = true;
+
+          // Get the first job in the queue (FIFO)
+          const nextJob = available[0];
+
+          // Set start time if this is the first time the job runs
+          nextJob.start = nextJob.start === -1 ? time : nextJob.start;
+
+          // Find an available CPU
+          const availableCPUId =
+            Object.keys(cpuAssignments).find(
+              (cpuId) => cpuAssignments[cpuId] === null
+            ) || `CPU${activeCPUs.length + 1}`;
+
+          // Add job to active CPUs
+          activeCPUs.push({
+            cpuId: availableCPUId,
+            job: nextJob,
+            quantumLeft: timeQuantum,
+            segmentStart: time,
+          });
+
+          // Update CPU assignments
+          cpuAssignments[availableCPUId] = nextJob.name;
+
+          // Remove job from ready queue and available jobs
+          readyQueue = readyQueue.filter((j) => j !== nextJob);
+          available = available.filter((j) => j !== nextJob);
+        }
+
+        // If no jobs are running but jobs will arrive later, jump to next arrival time
+        if (activeCPUs.length === 0 && readyQueue.length > 0) {
+          const oldTime = time;
+          time = readyQueue[0].arrival;
+          const time_point_idx = timeline.findIndex(
+            (item) => item.time === time
+          );
+          const new_timeevent = {
+            time: time,
+            cpuAssignments: { ...cpuAssignments },
+            queue: readyQueue
+              .filter((job) => job.arrival <= time)
+              .map((job) => ({ name: job.name, remaining: job.remaining! })),
+          };
+          if (time_point_idx !== -1) {
+            timeline[time_point_idx] = new_timeevent;
+          } else {
+            timeline.push(new_timeevent);
+          }
+
+          continue;
+        }
+        // If no jobs are running and no jobs will arrive, we're done
+        else if (activeCPUs.length === 0) {
+          break;
+        }
+
+        // Calculate how much time to advance
+        const nextArrival =
+          readyQueue.length > 0
+            ? readyQueue[0].arrival
+            : Number.POSITIVE_INFINITY;
+        const minQuantum = Math.min(
+          ...activeCPUs.map((cpu) => cpu.quantumLeft)
+        );
+        const timeStep =
+          Math.min(minQuantum, Math.max(nextArrival - time, 0)) || minQuantum;
+
+        // Check if there's a job arrival before the next calculated time step
+        const nextTime = time + timeStep;
+        const arrivalsBeforeNextTime = arrivalTimes.filter(
+          (t) => t > time && t < nextTime
+        );
+
+        // If there are arrivals before the next time step, process them one by one
+        if (arrivalsBeforeNextTime.length > 0) {
+          // Process the first arrival
+          time = arrivalsBeforeNextTime[0];
+          const time_point_idx = timeline.findIndex(
+            (item) => item.time === time
+          );
+          const new_timeevent = {
+            time: time,
+            cpuAssignments: { ...cpuAssignments },
+            queue: readyQueue
+              .filter((job) => job.arrival <= time)
+              .map((job) => ({ name: job.name, remaining: job.remaining! })),
+          };
+
+          // Record the arrival event
+          if (time_point_idx !== -1) {
+            timeline[time_point_idx] = new_timeevent;
+          } else {
+            timeline.push(new_timeevent);
+          }
+          continue; // Restart the loop to process this arrival
+        }
+
+        // Advance time
+        const oldTime = time;
+        time += timeStep;
+
+        // Update job progress and handle completions/quantum expirations
+        let stateChanged = false;
+        for (let i = activeCPUs.length - 1; i >= 0; i--) {
+          const cpu = activeCPUs[i];
+          const oldRemaining = cpu.job.remaining!;
+          cpu.job.remaining! -= timeStep;
+          cpu.quantumLeft -= timeStep;
+
+          // Check if job is completed
+          if (cpu.job.remaining! <= 0.0001) {
+            stateChanged = true;
+
+            // Create execution segment
+            segments.push({
+              cpuId: cpu.cpuId,
+              jobName: cpu.job.name,
+              startTime: cpu.segmentStart,
+              endTime: time,
+              color:
+                cpu.job.color ||
+                jobColors[Number.parseInt(cpu.job.id) % jobColors.length],
+            });
+
+            // Mark job as completed
+            completed.push({
+              ...cpu.job,
+              remaining: 0,
+              end: time,
+              turnaround: time - cpu.job.arrival,
+              waitingTime: time - cpu.job.arrival - cpu.job.burst,
+            });
+
+            // Update CPU assignments
+            cpuAssignments[cpu.cpuId] = null;
+
+            // Remove job from active CPUs
+            activeCPUs.splice(i, 1);
+          }
+          // Check if time quantum expired
+          else if (cpu.quantumLeft <= 0.0001) {
+            stateChanged = true;
+
+            // Create execution segment
+            segments.push({
+              cpuId: cpu.cpuId,
+              jobName: cpu.job.name,
+              startTime: cpu.segmentStart,
+              endTime: time,
+              color:
+                cpu.job.color ||
+                jobColors[Number.parseInt(cpu.job.id) % jobColors.length],
+            });
+
+            // Quantum expired, but job not completed
+            if (cpu.job.remaining! > 0) {
+              // Return job to ready queue (at the end for Round Robin)
+              readyQueue.push({
+                ...cpu.job,
+                remaining: cpu.job.remaining!,
+                start: cpu.job.start!,
+              });
+            }
+
+            // Update CPU assignments
+            cpuAssignments[cpu.cpuId] = null;
+
+            // Remove job from active CPUs
+            activeCPUs.splice(i, 1);
+          }
+        }
+
+        // For Round Robin, we don't need to sort the ready queue
+        // as jobs are processed in FIFO order
+
+        // Record state after processing if state changed
+        if (stateChanged) {
+          const time_point_idx = timeline.findIndex(
+            (item) => item.time === time
+          );
+          const new_timeevent = {
+            time: time,
+            cpuAssignments: { ...cpuAssignments },
+            queue: readyQueue
+              .filter((job) => job.arrival <= time)
+              .map((job) => ({ name: job.name, remaining: job.remaining! })),
+          };
+
+          // Record the arrival event
+          if (time_point_idx !== -1) {
+            timeline[time_point_idx] = new_timeevent;
+          } else {
+            timeline.push(new_timeevent);
+          }
+        }
+      }
+
+      // Sort timeline events by time
+      timeline.sort((a, b) => a.time - b.time);
+
+      return { completed, timeline, segments };
+    };
+    if (schedulingAlgorithm === "srtn") {
+      // Use existing SRTN scheduler
+      const { completed, timeline, segments } = srtnScheduler(
+        jobs,
+        numCPUs,
+        timeQuantum
+      );
+
+      // Format results for display (round to 2 decimal places)
+      const formattedResults = completed.map((job) => ({
+        ...job,
+        start: Number(job.start!.toFixed(2)),
+        end: Number(job.end!.toFixed(2)),
+        turnaround: Number(job.turnaround!.toFixed(2)),
+        waitingTime: Number(job.waitingTime!.toFixed(2)),
+      }));
+
+      // Sort results by the original order
+      formattedResults.sort((a, b) => (a.order || 0) - (b.order || 0));
+
+      // Set results
+      setResults(formattedResults);
+      setTimelineEvents(timeline);
+      setExecutionSegments(segments);
+      setCalculated(true);
+    } else {
+      // Use Round Robin scheduler
+      const { completed, timeline, segments } = roundRobinScheduler(
+        jobs,
+        numCPUs,
+        timeQuantum
+      );
+
+      // Format results for display (round to 2 decimal places)
+      const formattedResults = completed.map((job) => ({
+        ...job,
+        start: Number(job.start!.toFixed(2)),
+        end: Number(job.end!.toFixed(2)),
+        turnaround: Number(job.turnaround!.toFixed(2)),
+        waitingTime: Number(job.waitingTime!.toFixed(2)),
+      }));
+
+      // Sort results by the original order
+      formattedResults.sort((a, b) => (a.order || 0) - (b.order || 0));
+
+      // Set results
+      setResults(formattedResults);
+      setTimelineEvents(timeline);
+      setExecutionSegments(segments);
+      setCalculated(true);
+    }
 
     // Run the scheduler
     const { completed, timeline, segments } = srtnScheduler(
@@ -524,7 +887,9 @@ export default function JobSchedulerPage() {
         <div className="flex items-center justify-center gap-2 w-full">
           <CalendarClock className="h-6 w-6" />
           <h1 className="text-xl text-center font-semibold">
-            Shortest Remaining Time Next Job Scheduling Algorithm
+            {schedulingAlgorithm === "srtn"
+              ? "Shortest Remaining Time Next Job Scheduling Algorithm"
+              : "Round Robin Job Scheduling Algorithm"}
           </h1>
         </div>
       </header>
@@ -565,6 +930,37 @@ export default function JobSchedulerPage() {
                   />
                 </div>
               </div>
+              <div className="mt-4">
+                <Label htmlFor="algorithm">Scheduling Algorithm</Label>
+                <div className="flex gap-4 mt-2">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="radio"
+                      id="srtn"
+                      value="srtn"
+                      checked={schedulingAlgorithm === "srtn"}
+                      onChange={() => setSchedulingAlgorithm("srtn")}
+                      className="h-4 w-4"
+                    />
+                    <Label htmlFor="srtn" className="font-normal">
+                      Shortest Remaining Time Next
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="radio"
+                      id="round-robin"
+                      value="round-robin"
+                      checked={schedulingAlgorithm === "round-robin"}
+                      onChange={() => setSchedulingAlgorithm("round-robin")}
+                      className="h-4 w-4"
+                    />
+                    <Label htmlFor="round-robin" className="font-normal">
+                      Round Robin
+                    </Label>
+                  </div>
+                </div>
+              </div>
             </CardContent>
           </Card>
 
@@ -574,6 +970,31 @@ export default function JobSchedulerPage() {
               <CardTitle>Add Jobs</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="job-examples">Job Examples</Label>
+                <div className="flex gap-2">
+                  <select
+                    id="job-examples"
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    value={selectedExample}
+                    onChange={(e) => loadJobExample(e.target.value)}
+                  >
+                    <option value="none" disabled={selectedExample !== "none"}>
+                      Select an example
+                    </option>
+                    <option value="default">Default Example</option>
+                    <option value="example1">Example 1 </option>
+                    <option value="example2">Example 2 </option>
+                  </select>
+                  <Button
+                    variant="outline"
+                    onClick={resetJobs}
+                    className="whitespace-nowrap"
+                  >
+                    Reset Jobs
+                  </Button>
+                </div>
+              </div>
               <div className="grid grid-cols-4 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="job-name">Job Name</Label>
